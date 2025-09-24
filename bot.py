@@ -8,8 +8,7 @@ from pathlib import Path
 
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from pytgcalls import PyTgCalls
-from pytgcalls.types.input_stream import AudioPiped
+from pytgcalls import GroupCallFactory
 
 from gtts import gTTS
 import aiohttp
@@ -35,7 +34,8 @@ ELEVEN_VOICE_ID = os.getenv("ELEVEN_VOICE_ID", "")
 
 # ---------- INIT ----------
 app = Client("vc_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
-pytg = PyTgCalls(app)
+gcf = GroupCallFactory(app)
+pytg = gcf.get_group_call()
 
 # temp directory for downloads & tts
 temp_dir = Path(tempfile.gettempdir()) / "vcbot_cache"
@@ -50,9 +50,7 @@ tts_mode = "gtts"  # or "eleven"
 # ---------- HELPERS ----------
 
 def yt_download(query: str, timeout: int = 60) -> str | None:
-    """Download YouTube audio to a temp file using yt_dlp. Returns filepath or None."""
     outname = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False, dir=temp_dir).name
-    # yt-dlp expects template; give full path
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": outname,
@@ -63,23 +61,15 @@ def yt_download(query: str, timeout: int = 60) -> str | None:
             "preferredcodec": "mp3",
             "preferredquality": "192",
         }],
-        # avoid writing metadata that can cause hangs
         "noplaylist": True,
         "ignoreerrors": False,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # run inside a limited time to prevent hangs
-            loop = asyncio.new_event_loop()
-            try:
-                # yt_dlp is blocking; run and rely on outer code running it in executor
-                ydl.download([query])
-            finally:
-                loop.close()
+            ydl.download([query])
         return outname
     except Exception as e:
         logger.error("yt-dlp error: %s", e, exc_info=True)
-        # clean up partial file
         try:
             if os.path.exists(outname):
                 os.remove(outname)
@@ -91,7 +81,6 @@ def yt_download(query: str, timeout: int = 60) -> str | None:
 async def tts_gtts(text: str, lang="hi") -> str | None:
     path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False, dir=temp_dir).name
     try:
-        # gTTS is blocking; run in executor
         def _save():
             gTTS(text=text, lang=lang).save(path)
         await asyncio.get_event_loop().run_in_executor(None, _save)
@@ -135,28 +124,16 @@ async def tts_eleven(text: str) -> str | None:
         return None
 
 
-async def safe_join_play(filepath: str):
-    """Safely ensure we're not in another call and start playing filepath."""
-    # Ensure only limited number of concurrent play tasks
+async def safe_play(filepath: str):
     async with AUDIO_SEMAPHORE:
-        # If currently in a call, try to change stream by leaving first to avoid exceptions
         try:
-            await pytg.leave_group_call(GROUP_ID)
-        except Exception:
-            # ignore; maybe not in call
-            pass
-        # small delay to ensure leave processed
-        await asyncio.sleep(0.6)
-        try:
-            # join and play
-            await pytg.join_group_call(GROUP_ID, AudioPiped(filepath))
+            await pytg.start_audio(filepath)
         except Exception as e:
             logger.error("Play error: %s", e, exc_info=True)
             raise
 
 
 async def cleanup_file(path: str, delay: float = 2.0):
-    """Remove file after a small delay so playback has time to start."""
     await asyncio.sleep(delay)
     try:
         if os.path.exists(path):
@@ -188,13 +165,11 @@ async def play_handler(c: Client, m: Message):
         return await m.reply("Usage: /play <song name or YouTube URL>")
     query = " ".join(m.command[1:])
     await m.reply("🎵 Downloading...")
-    # run yt-dlp in executor (blocking)
     path = await asyncio.get_event_loop().run_in_executor(None, yt_download, query)
     if path:
         try:
-            await safe_join_play(path)
+            await safe_play(path)
             await m.reply("▶️ Now Playing")
-            # schedule cleanup
             asyncio.create_task(cleanup_file(path, delay=5.0))
         except Exception:
             await m.reply("❌ Failed to play the audio. See logs.")
@@ -206,7 +181,7 @@ async def play_handler(c: Client, m: Message):
 @safe_handler
 async def skip_handler(c: Client, m: Message):
     try:
-        await pytg.leave_group_call(GROUP_ID)
+        await pytg.stop()
         await m.reply("⏭ Skipped")
     except Exception as e:
         logger.error("Skip error: %s", e, exc_info=True)
@@ -228,7 +203,7 @@ async def tts_handler(c: Client, m: Message):
         path = await tts_eleven(text)
     if path:
         try:
-            await safe_join_play(path)
+            await safe_play(path)
             await m.reply("🔊 TTS Playing")
             asyncio.create_task(cleanup_file(path, delay=5.0))
         except Exception:
@@ -264,7 +239,6 @@ async def cb_handler(c, q):
 
 async def start_bot():
     await app.start()
-    await pytg.start()
     logger.info("Bot started ✅")
 
 
@@ -285,14 +259,12 @@ def _signal_handler(sig, frame):
     asyncio.create_task(stop_bot())
 
 
-# wire signals for graceful shutdown
 signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
 
 
 async def main():
     await start_bot()
-    # keep running until stopped
     await asyncio.get_event_loop().create_future()
 
 
