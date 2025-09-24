@@ -3,7 +3,8 @@ import asyncio
 import logging
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from pytgcalls import PyTgCalls, idle
+from pytgcalls import PyTgCalls
+from pytgcalls.idle import idle
 from pytgcalls.types.input_stream import InputAudioStream
 from gtts import gTTS
 
