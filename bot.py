@@ -16,7 +16,11 @@ CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 GROUP_ID = os.getenv("GROUP_ID", "")
 
 # Initialize Pyrogram client
-app = Client(session_name=SESSION_STRING, api_id=API_ID, api_hash=API_HASH)
+app = Client(
+    session_string=SESSION_STRING,
+    api_id=API_ID,
+    api_hash=API_HASH
+)
 
 # Initialize GroupCallFactory
 group_call = GroupCallFactory(app).get_group_call()
