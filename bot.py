@@ -8,10 +8,12 @@ from typing import Optional
 
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from pytgcalls import GroupCallFactory
+from pytgcalls import PyTgCalls
+from pytgcalls.types.input_stream import AudioPiped
 from gtts import gTTS
 import yt_dlp
 import aiohttp
+import ffmpeg
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vcbot")
@@ -20,12 +22,12 @@ logger = logging.getLogger("vcbot")
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "")  # numeric like -100...
-GROUP_ID = os.getenv("GROUP_ID", "")      # numeric like -100...
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))  # numeric like -100...
+GROUP_ID = int(os.getenv("GROUP_ID", "0"))      # numeric like -100...
 
 # ---------- Init clients ----------
 app = Client("vc_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
-group_call = GroupCallFactory(app).get_group_call()
+pytg = PyTgCalls(app)
 
 # ---------- Playback queue ----------
 play_queue = asyncio.Queue()
@@ -35,11 +37,7 @@ temp_dir.mkdir(parents=True, exist_ok=True)
 
 # ---------- Helpers ----------
 async def download_file_from_message(msg: Message) -> Optional[str]:
-    """
-    If message has audio/document (mp3/ogg/m4a) download and return filepath.
-    """
     if msg.audio or msg.document or msg.voice:
-        # prefer audio -> document -> voice
         media = msg.audio or msg.document or msg.voice
         fname = f"{temp_dir}/{media.file_id}_{media.file_name or 'audio'}.mp3"
         try:
@@ -51,10 +49,6 @@ async def download_file_from_message(msg: Message) -> Optional[str]:
     return None
 
 def yt_download_to_file(query: str) -> Optional[str]:
-    """
-    Download best audio from YouTube (or URL) to a local mp3 file via yt-dlp.
-    Synchronous because yt-dlp is blocking; we'll call it in executor.
-    """
     outname = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False, dir=str(temp_dir)).name
     ydl_opts = {
         "format": "bestaudio/best",
@@ -75,14 +69,12 @@ def yt_download_to_file(query: str) -> Optional[str]:
         return outname
     except Exception as e:
         logger.error("yt-dlp error: %s", e)
-        # cleanup
         if os.path.exists(outname):
             try: os.remove(outname)
             except: pass
         return None
 
 async def tts_to_file(text: str, lang: str = "hi") -> Optional[str]:
-    """Generate TTS MP3 and return file path"""
     tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False, dir=str(temp_dir))
     tmp.close()
     try:
@@ -96,65 +88,49 @@ async def tts_to_file(text: str, lang: str = "hi") -> Optional[str]:
         return None
 
 async def enqueue_and_maybe_play(filepath: str, title: str = None):
-    """Put file in queue and ensure playback coroutine running."""
     await play_queue.put((filepath, title or filepath))
-    # trigger player if not already running
     if not playing_lock.locked():
-        # start player in background
         asyncio.create_task(player_worker())
 
 async def player_worker():
-    """
-    Worker: pulls from queue and plays sequentially in group call.
-    Uses group_call.join and group_call.start_audio(file).
-    """
     async with playing_lock:
         while not play_queue.empty():
             filepath, title = await play_queue.get()
             logger.info("Now playing: %s", title)
             try:
-                if not group_call.is_connected:
-                    await group_call.join(int(GROUP_ID))
-                # start audio - uses file path
-                await group_call.start_audio(filepath)
-                # wait until playback finished; simple approach: poll file lock / duration
-                # Here we do a naive wait: check file size stops changing for a moment OR sleep by duration using ffmpeg to get duration.
-                # Simpler: wait while group_call.is_playing may not exist; we use a fixed heuristic wait by querying duration via ffmpeg-python
-                import ffmpeg
+                if int(GROUP_ID) not in pytg.active_calls:
+                    await pytg.join_group_call(
+                        int(GROUP_ID),
+                        AudioPiped(filepath),
+                    )
+                else:
+                    await pytg.change_stream(
+                        int(GROUP_ID),
+                        AudioPiped(filepath),
+                    )
+
                 try:
                     probe = ffmpeg.probe(filepath)
                     duration = float(probe['format']['duration'])
                 except Exception:
                     duration = 0
-                # minimum wait to allow stream start
-                wait_time = max(1.5, duration)
-                await asyncio.sleep(wait_time)
-                # stop audio (if API provides method, else rely on start_audio finishing)
+
+                await asyncio.sleep(max(2.0, duration))
+
                 try:
-                    await group_call.stop_audio()
+                    await pytg.leave_group_call(int(GROUP_ID))
                 except Exception:
-                    # some pytgcalls versions auto-stop
                     pass
+
             except Exception as e:
                 logger.error("Playback error: %s", e)
             finally:
-                # cleanup local file
-                try:
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                except:
-                    pass
+                if os.path.exists(filepath):
+                    os.remove(filepath)
                 play_queue.task_done()
-        # optionally leave call after idle
-        try:
-            if group_call.is_connected:
-                await group_call.leave()
-        except Exception:
-            pass
 
 # ---------- Pyrogram handlers ----------
 
-# 1) Channel text -> TTS
 @app.on_message(filters.chat(CHANNEL_ID) & filters.text)
 async def on_channel_text(client: Client, message: Message):
     text = message.text.strip()
@@ -165,32 +141,22 @@ async def on_channel_text(client: Client, message: Message):
     if mp3:
         await enqueue_and_maybe_play(mp3, title=f"TTS: {text[:30]}")
 
-# 2) Channel MP3 / audio -> download & play
 @app.on_message(filters.chat(CHANNEL_ID) & (filters.audio | filters.voice | filters.document))
 async def on_channel_media(client: Client, message: Message):
-    # check file extension if document
     logger.info("Channel media received")
     path = await download_file_from_message(message)
     if path:
         await enqueue_and_maybe_play(path, title="ChannelAudio")
 
-# 3) Commands in group or channel: /play <url or search>
-# We'll accept commands from channel OR group admins (simple policy)
 @app.on_message(filters.command("play") & (filters.chat(CHANNEL_ID) | filters.group))
 async def cmd_play(client: Client, message: Message):
-    # message.text like "/play <query>"
     if len(message.command) < 2:
-        await message.reply_text("Usage: /play <YouTube URL or search term or direct link>")
+        await message.reply_text("Usage: /play <YouTube URL or search term>")
         return
     query = " ".join(message.command[1:])
     await message.reply_text(f"Searching/Downloading: {query}")
-    # if query looks like url, pass directly; else use ytsearch:query
-    if query.startswith("http://") or query.startswith("https://"):
-        target = query
-    else:
-        target = f"ytsearch:{query}"
+    target = query if query.startswith("http") else f"ytsearch:{query}"
     loop = asyncio.get_event_loop()
-    # run blocking yt-dlp in executor
     mp3_path = await loop.run_in_executor(None, yt_download_to_file, target)
     if mp3_path:
         await message.reply_text("Queued for play ✅")
@@ -198,10 +164,8 @@ async def cmd_play(client: Client, message: Message):
     else:
         await message.reply_text("Download failed ❌")
 
-# 4) Optional: /skip command
 @app.on_message(filters.command("skip") & filters.group)
 async def cmd_skip(client: Client, message: Message):
-    # kills current playback: we implement by clearing queue and stopping audio
     try:
         while not play_queue.empty():
             _, _ = play_queue.get_nowait()
@@ -209,7 +173,7 @@ async def cmd_skip(client: Client, message: Message):
     except asyncio.QueueEmpty:
         pass
     try:
-        await group_call.stop_audio()
+        await pytg.leave_group_call(int(GROUP_ID))
         await message.reply_text("Skipped current track.")
     except Exception as e:
         await message.reply_text(f"Skip error: {e}")
@@ -217,9 +181,9 @@ async def cmd_skip(client: Client, message: Message):
 # ---------- Main ----------
 async def main():
     await app.start()
+    await pytg.start()
     logger.info("Bot started! Waiting for channel or commands...")
-    # No need to start group_call explicitly; join when playing
-    await asyncio.Future()  # run forever
+    await asyncio.Future()
 
 if __name__ == "__main__":
     try:
