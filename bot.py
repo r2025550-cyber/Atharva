@@ -22,8 +22,8 @@ logger = logging.getLogger("vcbot")
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))  # numeric like -100...
-GROUP_ID = int(os.getenv("GROUP_ID", "0"))      # numeric like -100...
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))   # numeric like -100...
+GROUP_ID = int(os.getenv("GROUP_ID", "0"))       # numeric like -100...
 
 # ---------- Init clients ----------
 app = Client("vc_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
@@ -31,7 +31,7 @@ pytg = PyTgCalls(app)
 
 # ---------- Playback queue ----------
 play_queue = asyncio.Queue()
-playing_lock = asyncio.Lock()  # ensure single player
+playing_lock = asyncio.Lock()
 temp_dir = Path(tempfile.gettempdir()) / "vcbot_cache"
 temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -41,7 +41,7 @@ async def download_file_from_message(msg: Message) -> Optional[str]:
         media = msg.audio or msg.document or msg.voice
         fname = f"{temp_dir}/{media.file_id}_{media.file_name or 'audio'}.mp3"
         try:
-            logger.info("Downloading media from channel...")
+            logger.info("Downloading media...")
             await msg.download(file_name=fname)
             return fname
         except Exception as e:
@@ -70,8 +70,7 @@ def yt_download_to_file(query: str) -> Optional[str]:
     except Exception as e:
         logger.error("yt-dlp error: %s", e)
         if os.path.exists(outname):
-            try: os.remove(outname)
-            except: pass
+            os.remove(outname)
         return None
 
 async def tts_to_file(text: str, lang: str = "hi") -> Optional[str]:
@@ -83,8 +82,7 @@ async def tts_to_file(text: str, lang: str = "hi") -> Optional[str]:
         return tmp.name
     except Exception as e:
         logger.error("gTTS error: %s", e)
-        try: os.remove(tmp.name)
-        except: pass
+        os.remove(tmp.name)
         return None
 
 async def enqueue_and_maybe_play(filepath: str, title: str = None):
@@ -98,30 +96,17 @@ async def player_worker():
             filepath, title = await play_queue.get()
             logger.info("Now playing: %s", title)
             try:
-                if int(GROUP_ID) not in pytg.active_calls:
-                    await pytg.join_group_call(
-                        int(GROUP_ID),
-                        AudioPiped(filepath),
-                    )
-                else:
-                    await pytg.change_stream(
-                        int(GROUP_ID),
-                        AudioPiped(filepath),
-                    )
-
+                await pytg.join_group_call(
+                    GROUP_ID,
+                    AudioPiped(filepath)
+                )
                 try:
                     probe = ffmpeg.probe(filepath)
                     duration = float(probe['format']['duration'])
                 except Exception:
                     duration = 0
-
-                await asyncio.sleep(max(2.0, duration))
-
-                try:
-                    await pytg.leave_group_call(int(GROUP_ID))
-                except Exception:
-                    pass
-
+                await asyncio.sleep(max(2, duration))
+                await pytg.leave_group_call(GROUP_ID)
             except Exception as e:
                 logger.error("Playback error: %s", e)
             finally:
@@ -129,8 +114,7 @@ async def player_worker():
                     os.remove(filepath)
                 play_queue.task_done()
 
-# ---------- Pyrogram handlers ----------
-
+# ---------- Handlers ----------
 @app.on_message(filters.chat(CHANNEL_ID) & filters.text)
 async def on_channel_text(client: Client, message: Message):
     text = message.text.strip()
@@ -151,15 +135,18 @@ async def on_channel_media(client: Client, message: Message):
 @app.on_message(filters.command("play") & (filters.chat(CHANNEL_ID) | filters.group))
 async def cmd_play(client: Client, message: Message):
     if len(message.command) < 2:
-        await message.reply_text("Usage: /play <YouTube URL or search term>")
+        await message.reply_text("Usage: /play <YouTube URL or search>")
         return
     query = " ".join(message.command[1:])
-    await message.reply_text(f"Searching/Downloading: {query}")
-    target = query if query.startswith("http") else f"ytsearch:{query}"
+    await message.reply_text(f"Downloading: {query}")
+    if query.startswith("http://") or query.startswith("https://"):
+        target = query
+    else:
+        target = f"ytsearch:{query}"
     loop = asyncio.get_event_loop()
     mp3_path = await loop.run_in_executor(None, yt_download_to_file, target)
     if mp3_path:
-        await message.reply_text("Queued for play ✅")
+        await message.reply_text("Queued ✅")
         await enqueue_and_maybe_play(mp3_path, title=query)
     else:
         await message.reply_text("Download failed ❌")
@@ -170,10 +157,7 @@ async def cmd_skip(client: Client, message: Message):
         while not play_queue.empty():
             _, _ = play_queue.get_nowait()
             play_queue.task_done()
-    except asyncio.QueueEmpty:
-        pass
-    try:
-        await pytg.leave_group_call(int(GROUP_ID))
+        await pytg.leave_group_call(GROUP_ID)
         await message.reply_text("Skipped current track.")
     except Exception as e:
         await message.reply_text(f"Skip error: {e}")
@@ -182,11 +166,11 @@ async def cmd_skip(client: Client, message: Message):
 async def main():
     await app.start()
     await pytg.start()
-    logger.info("Bot started! Waiting for channel or commands...")
+    logger.info("Bot started! Waiting for messages...")
     await asyncio.Future()
 
 if __name__ == "__main__":
     try:
-        asyncio.get_event_loop().run_until_complete(main())
+        asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Exiting...")
