@@ -17,9 +17,10 @@ GROUP_ID = os.getenv("GROUP_ID", "")
 
 # Initialize Pyrogram Client (Pyrogram v2 syntax)
 app = Client(
-    session_string=SESSION_STRING,
+    "vc_bot",  # name required
     api_id=API_ID,
-    api_hash=API_HASH
+    api_hash=API_HASH,
+    session_string=SESSION_STRING
 )
 
 # Initialize GroupCallFactory for voice chat
