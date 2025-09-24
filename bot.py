@@ -9,7 +9,7 @@ from typing import Optional
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pytgcalls import PyTgCalls
-from pytgcalls.types.input_stream import AudioPiped
+from pytgcalls.types import AudioPiped
 from gtts import gTTS
 import yt_dlp
 import aiohttp
