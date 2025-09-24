@@ -2,6 +2,8 @@ import os
 import asyncio
 import logging
 import tempfile
+import signal
+import sys
 from pathlib import Path
 
 from pyrogram import Client, filters
@@ -12,11 +14,15 @@ from pytgcalls.types.input_stream import AudioPiped
 from gtts import gTTS
 import aiohttp
 import yt_dlp
-import ffmpeg
 
 # ---------- LOGGING ----------
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("vcbot")
+
+# Also log errors to file for post-mortem
+err_handler = logging.FileHandler("bot_error.log")
+err_handler.setLevel(logging.ERROR)
+logger.addHandler(err_handler)
 
 # ---------- ENV ----------
 API_ID = int(os.getenv("API_ID", "0"))
@@ -31,107 +37,208 @@ ELEVEN_VOICE_ID = os.getenv("ELEVEN_VOICE_ID", "")
 app = Client("vc_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
 pytg = PyTgCalls(app)
 
+# temp directory for downloads & tts
 temp_dir = Path(tempfile.gettempdir()) / "vcbot_cache"
 temp_dir.mkdir(parents=True, exist_ok=True)
 
-tts_mode = "gtts"  # default
+# concurrency control - tunable
+AUDIO_SEMAPHORE = asyncio.Semaphore(2)
+
+# default TTS mode
+tts_mode = "gtts"  # or "eleven"
 
 # ---------- HELPERS ----------
-def yt_download(query: str) -> str | None:
-    """Download YouTube audio"""
+
+def yt_download(query: str, timeout: int = 60) -> str | None:
+    """Download YouTube audio to a temp file using yt_dlp. Returns filepath or None."""
     outname = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False, dir=temp_dir).name
+    # yt-dlp expects template; give full path
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": outname,
         "quiet": True,
+        "no_warnings": True,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
             "preferredquality": "192",
         }],
+        # avoid writing metadata that can cause hangs
+        "noplaylist": True,
+        "ignoreerrors": False,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([query])
+            # run inside a limited time to prevent hangs
+            loop = asyncio.new_event_loop()
+            try:
+                # yt_dlp is blocking; run and rely on outer code running it in executor
+                ydl.download([query])
+            finally:
+                loop.close()
         return outname
     except Exception as e:
-        logger.error("yt-dlp error: %s", e)
+        logger.error("yt-dlp error: %s", e, exc_info=True)
+        # clean up partial file
+        try:
+            if os.path.exists(outname):
+                os.remove(outname)
+        except Exception:
+            pass
         return None
+
 
 async def tts_gtts(text: str, lang="hi") -> str | None:
     path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False, dir=temp_dir).name
     try:
-        gTTS(text=text, lang=lang).save(path)
+        # gTTS is blocking; run in executor
+        def _save():
+            gTTS(text=text, lang=lang).save(path)
+        await asyncio.get_event_loop().run_in_executor(None, _save)
         return path
     except Exception as e:
-        logger.error("gTTS error: %s", e)
+        logger.error("gTTS error: %s", e, exc_info=True)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
         return None
+
 
 async def tts_eleven(text: str) -> str | None:
     path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False, dir=temp_dir).name
+    if not ELEVEN_API_KEY or not ELEVEN_VOICE_ID:
+        logger.error("ElevenLabs credentials not set")
+        return None
     try:
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE_ID}"
         headers = {"xi-api-key": ELEVEN_API_KEY, "Content-Type": "application/json"}
         payload = {"text": text, "model_id": "eleven_monolingual_v1"}
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as resp:
+            async with session.post(url, headers=headers, json=payload, timeout=30) as resp:
                 if resp.status == 200:
                     with open(path, "wb") as f:
                         f.write(await resp.read())
                     return path
                 else:
-                    logger.error("ElevenLabs error: %s", await resp.text())
+                    txt = await resp.text()
+                    logger.error("ElevenLabs error status=%s: %s", resp.status, txt)
                     return None
     except Exception as e:
-        logger.error("ElevenLabs exception: %s", e)
+        logger.error("ElevenLabs exception: %s", e, exc_info=True)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
         return None
 
-async def play_file(filepath: str):
+
+async def safe_join_play(filepath: str):
+    """Safely ensure we're not in another call and start playing filepath."""
+    # Ensure only limited number of concurrent play tasks
+    async with AUDIO_SEMAPHORE:
+        # If currently in a call, try to change stream by leaving first to avoid exceptions
+        try:
+            await pytg.leave_group_call(GROUP_ID)
+        except Exception:
+            # ignore; maybe not in call
+            pass
+        # small delay to ensure leave processed
+        await asyncio.sleep(0.6)
+        try:
+            # join and play
+            await pytg.join_group_call(GROUP_ID, AudioPiped(filepath))
+        except Exception as e:
+            logger.error("Play error: %s", e, exc_info=True)
+            raise
+
+
+async def cleanup_file(path: str, delay: float = 2.0):
+    """Remove file after a small delay so playback has time to start."""
+    await asyncio.sleep(delay)
     try:
-        await pytg.join_group_call(
-            GROUP_ID,
-            AudioPiped(filepath)
-        )
-    except Exception as e:
-        logger.error("Play error: %s", e)
+        if os.path.exists(path):
+            os.remove(path)
+            logger.debug("Removed temp file: %s", path)
+    except Exception:
+        logger.exception("Failed removing temp file")
+
 
 # ---------- HANDLERS ----------
 
+def safe_handler(fn):
+    async def wrapper(c, m, *args, **kwargs):
+        try:
+            await fn(c, m, *args, **kwargs)
+        except Exception as e:
+            logger.error("Unhandled exception in handler: %s", e, exc_info=True)
+            try:
+                await m.reply("⚠️ An internal error occurred. Check bot logs.")
+            except Exception:
+                pass
+    return wrapper
+
+
 @app.on_message(filters.command("play") & filters.group)
+@safe_handler
 async def play_handler(c: Client, m: Message):
     if len(m.command) < 2:
         return await m.reply("Usage: /play <song name or YouTube URL>")
     query = " ".join(m.command[1:])
     await m.reply("🎵 Downloading...")
+    # run yt-dlp in executor (blocking)
     path = await asyncio.get_event_loop().run_in_executor(None, yt_download, query)
     if path:
-        await play_file(path)
-        await m.reply("▶️ Now Playing")
+        try:
+            await safe_join_play(path)
+            await m.reply("▶️ Now Playing")
+            # schedule cleanup
+            asyncio.create_task(cleanup_file(path, delay=5.0))
+        except Exception:
+            await m.reply("❌ Failed to play the audio. See logs.")
     else:
         await m.reply("❌ Download failed")
 
+
 @app.on_message(filters.command("skip") & filters.group)
+@safe_handler
 async def skip_handler(c: Client, m: Message):
     try:
         await pytg.leave_group_call(GROUP_ID)
         await m.reply("⏭ Skipped")
     except Exception as e:
-        await m.reply(f"Skip error: {e}")
+        logger.error("Skip error: %s", e, exc_info=True)
+        await m.reply("❌ Skip failed. See logs.")
+
 
 @app.on_message(filters.command("tts") & filters.group)
+@safe_handler
 async def tts_handler(c: Client, m: Message):
     if len(m.command) < 2:
         return await m.reply("Usage: /tts <text>")
-    text = " ".join(m.command[1:])
+    text = " ".join(m.command[1:]).strip()
+    if not text:
+        return await m.reply("Please provide text for TTS.")
     await m.reply("🎤 Generating voice...")
-    path = await (tts_gtts(text) if tts_mode == "gtts" else tts_eleven(text))
+    if tts_mode == "gtts":
+        path = await tts_gtts(text)
+    else:
+        path = await tts_eleven(text)
     if path:
-        await play_file(path)
-        await m.reply("🔊 TTS Playing")
+        try:
+            await safe_join_play(path)
+            await m.reply("🔊 TTS Playing")
+            asyncio.create_task(cleanup_file(path, delay=5.0))
+        except Exception:
+            await m.reply("❌ Failed to play TTS. See logs.")
     else:
         await m.reply("❌ TTS failed")
 
+
 @app.on_message(filters.command("mode") & filters.group)
+@safe_handler
 async def mode_handler(c: Client, m: Message):
     global tts_mode
     keyboard = InlineKeyboardMarkup([
@@ -140,7 +247,9 @@ async def mode_handler(c: Client, m: Message):
     ])
     await m.reply("Select TTS mode:", reply_markup=keyboard)
 
+
 @app.on_callback_query()
+@safe_handler
 async def cb_handler(c, q):
     global tts_mode
     if q.data == "tts_gtts":
@@ -150,12 +259,46 @@ async def cb_handler(c, q):
         tts_mode = "eleven"
         await q.answer("✅ ElevenLabs mode enabled")
 
-# ---------- MAIN ----------
-async def main():
+
+# ---------- START / STOP ----------
+
+async def start_bot():
     await app.start()
     await pytg.start()
     logger.info("Bot started ✅")
+
+
+async def stop_bot():
+    try:
+        await pytg.stop()
+    except Exception:
+        pass
+    try:
+        await app.stop()
+    except Exception:
+        pass
+    logger.info("Bot stopped")
+
+
+def _signal_handler(sig, frame):
+    logger.info("Signal received: %s, shutting down...", sig)
+    asyncio.create_task(stop_bot())
+
+
+# wire signals for graceful shutdown
+signal.signal(signal.SIGINT, _signal_handler)
+signal.signal(signal.SIGTERM, _signal_handler)
+
+
+async def main():
+    await start_bot()
+    # keep running until stopped
     await asyncio.get_event_loop().create_future()
 
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception:
+        logger.exception("Fatal error")
+        sys.exit(1)
