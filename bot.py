@@ -11,7 +11,7 @@ from typing import Optional
 
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from pytgcalls import GroupCallFactory, StreamType
+from pytgcalls import GroupCallFactory
 from pytgcalls.types.input_stream import AudioPiped
 
 from gtts import gTTS
@@ -204,10 +204,9 @@ async def join_and_play(filepath: str, track: dict, m: Message = None):
             pass
         await asyncio.sleep(0.5)
         await pytg.join_group_call(
-            GROUP_ID,
-            AudioPiped(filepath),
-            stream_type=StreamType().local_stream
-        )
+    GROUP_ID,
+    AudioPiped(filepath)
+)
         current_track = track
         if m:
             await send_now_playing(m, track)
