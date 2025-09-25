@@ -2,32 +2,28 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# System dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    ffmpeg \
     git \
-    libavformat-dev \
-    libavdevice-dev \
-    libavfilter-dev \
-    libavcodec-dev \
-    libavutil-dev \
-    libswresample-dev \
-    libswscale-dev \
-    libopus-dev \
+    ffmpeg \
+    build-essential \
     pkg-config \
-    gcc \
-    g++ \
-    make \
+    libavformat-dev \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libavfilter-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first
-COPY requirements.txt .
-
-# Upgrade pip and install Python deps
+# Upgrade pip
 RUN pip install --upgrade pip setuptools wheel
+
+# Install dependencies (force av binary wheel)
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy bot files
 COPY . .
 
 CMD ["python", "bot.py"]
