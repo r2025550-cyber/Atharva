@@ -1,34 +1,4 @@
-FROM python:3.10-slim
-
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
+FROM ghcr.io/thehamkercat/pytgcalls:latest
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    pkg-config \
-    git \
-    ffmpeg \
-    libavcodec-dev \
-    libavformat-dev \
-    libavdevice-dev \
-    libavfilter-dev \
-    libavutil-dev \
-    libswscale-dev \
-    libopus-dev \
-    libssl-dev \
-    python3-dev \
-    python3-setuptools \
-    python3-wheel \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip setuptools wheel
-RUN pip install --no-cache-dir -r /app/requirements.txt
-
 COPY . /app
-
 CMD ["python", "bot.py"]
