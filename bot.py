@@ -11,7 +11,7 @@ from typing import Optional
 
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from pytgcalls import GroupCallFactory
+from pytgcalls import GroupCallFactory, AudioPiped
 from pytgcalls.types.input_stream import AudioPiped
 
 from gtts import gTTS
