@@ -8,3 +8,4 @@ aiohttp
 python-dotenv
 rich
 av==10.0.0 --only-binary=:all:
+pyaes==1.6.0
