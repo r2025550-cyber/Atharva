@@ -9,5 +9,5 @@ rich==13.3.0
 av==10.0.0
 pyaes==1.6.1
 
-# GitHub se pytgcalls (av 10 compatible)
+# Install pytgcalls from GitHub dev (latest) so that it supports av==10
 git+https://github.com/pytgcalls/pytgcalls@dev
