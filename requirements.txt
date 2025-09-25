@@ -7,9 +7,7 @@ aiohttp==3.8.4
 python-dotenv==1.0.0
 rich==13.3.0
 pyaes==1.6.1
-
-# ✅ Use latest prebuilt AV (skip old source builds)
 av==10.0.0
 
-# ✅ Pytgcalls dev branch (compatible with av 10+)
+# Pytgcalls dev branch (av10 compatible)
 git+https://github.com/pytgcalls/pytgcalls@dev
