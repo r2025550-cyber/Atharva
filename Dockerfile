@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
-# System dependencies (ffmpeg + PyAV ke liye)
+# System dependencies (PyAV + ffmpeg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -21,11 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus-dev \
     libssl-dev \
     python3-dev \
-    python3-distutils \
+    python3-setuptools \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Requirements
+# Copy requirements
 COPY requirements.txt /app/requirements.txt
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r /app/requirements.txt
