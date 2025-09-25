@@ -2,9 +2,10 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# System dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    git \
     libavformat-dev \
     libavdevice-dev \
     libavfilter-dev \
@@ -17,12 +18,14 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     make \
- && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 
-# Upgrade pip and install dependencies
+# Upgrade pip and install wheel
 RUN pip install --upgrade pip setuptools wheel
+
+# Install python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
