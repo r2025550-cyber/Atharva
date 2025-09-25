@@ -13,13 +13,14 @@ RUN apt-get update && apt-get install -y \
     libswresample-dev \
     libswscale-dev \
     libopus-dev \
+    pkg-config \
     gcc \
     g++ \
     make \
  && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --upgrade pip
+RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
