@@ -1,11 +1,11 @@
 pyrogram==2.0.106
 TgCrypto==1.2.5
-pytgcalls==3.0.0.dev22
+pytgcalls==3.0.0.dev27
 gTTS==2.5.1
 yt-dlp
 ffmpeg-python
 aiohttp
 python-dotenv
 rich
-av==8.1.0 --only-binary :all:
+av==10.0.0
 pyaes
