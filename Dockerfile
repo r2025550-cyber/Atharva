@@ -6,7 +6,6 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system deps (PyAV + ffmpeg ke liye)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -21,16 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus-dev \
     libssl-dev \
     python3-dev \
-    python3-distutils \
+    python3-setuptools \
+    python3-wheel \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
 COPY requirements.txt /app/requirements.txt
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy bot files
 COPY . /app
 
 CMD ["python", "bot.py"]
