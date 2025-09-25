@@ -7,5 +7,5 @@ ffmpeg-python
 aiohttp
 python-dotenv
 rich
-av==8.1.0
+av==8.1.0 --only-binary :all:
 pyaes
