@@ -1,9 +1,10 @@
 pyrogram==2.0.106
 tgcrypto==1.2.5
-git+https://github.com/pytgcalls/pytgcalls.git
+pytgcalls==3.0.0.dev22
 gTTS==2.5.1
 yt-dlp
 ffmpeg-python
 aiohttp
 python-dotenv
 rich
+av==10.0.0
