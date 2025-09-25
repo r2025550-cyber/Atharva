@@ -30,7 +30,7 @@ from pyrogram import Client, filters
 from pyrogram.enums import ChatType
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pytgcalls import PyTgCalls, idle
-from pytgcalls.types import StreamAudioEnded
+from pytgcalls.types.stream import StreamAudioEnded
 from pytgcalls.types.input_stream import InputStream
 from pytgcalls.types.input_stream.fft import AudioPiped
 from yt_dlp import YoutubeDL
