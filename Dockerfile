@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# System dependencies
+# System dependencies (for ffmpeg + av)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libavformat-dev \
@@ -17,17 +17,17 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     make \
- && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 
-# Upgrade pip and install wheel first
+# Upgrade pip + setuptools + wheel
 RUN pip install --upgrade pip setuptools wheel
 
-# Install av from prebuilt wheel (skip compiling)
+# Install av from prebuilt wheel only (skip compiling)
 RUN pip install av==9.2.0 --only-binary=:all:
 
-# Install other requirements
+# Install all Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
