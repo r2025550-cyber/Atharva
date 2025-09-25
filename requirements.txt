@@ -5,3 +5,5 @@ gTTS==2.5.1
 yt-dlp
 ffmpeg-python
 aiohttp
+python-dotenv
+rich
