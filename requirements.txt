@@ -1,6 +1,6 @@
 pyrogram==2.0.106
 tgcrypto==1.2.5
-pytgcalls==3.0.0.dev24
+pytgcalls==2.1.0
 yt-dlp==2024.10.7
 python-dotenv==1.0.1
 loguru==0.7.2
