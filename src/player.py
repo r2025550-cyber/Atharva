@@ -2,9 +2,7 @@ import asyncio
 import os
 from typing import Optional
 from pytgcalls import GroupCallFactory
-from pytgcalls.types import Update
 from pytgcalls.types.input_stream import AudioPiped
-from pytgcalls.types.stream import StreamAudioEnded
 from pyrogram import Client
 from loguru import logger
 from .queue import MusicQueue
@@ -23,8 +21,7 @@ class Player:
 
     async def start(self):
         @self.call.on_stream_end()
-        async def on_end(_, update: Update):
-            chat_id = update.chat_id
+        async def on_end(_, chat_id: int):
             logger.info(f"Stream ended in chat {chat_id}, moving to next track")
             await self._play_next(chat_id)
 
@@ -73,7 +70,10 @@ class Player:
         params = {}
         if vol != 100:
             # adjust ffmpeg volume filter
-            params['audio_parameters'] = {'preset': None, 'additional_ffmpeg_parameters': f'-filter:a volume={vol/100.0}'}
+            params['audio_parameters'] = {
+                'preset': None,
+                'additional_ffmpeg_parameters': f'-filter:a volume={vol/100.0}'
+            }
         try:
             await self.call.join_group_call(chat_id, AudioPiped(url, **params))
         except Exception as e:
