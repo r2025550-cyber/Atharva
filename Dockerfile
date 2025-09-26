@@ -1,36 +1,15 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONDONTWRITEBYTECODE=1     PYTHONUNBUFFERED=1     PIP_DISABLE_PIP_VERSION_CHECK=on     PIP_NO_CACHE_DIR=on
 
 WORKDIR /app
 
-# System dependencies (PyAV + ffmpeg)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    pkg-config \
-    git \
-    ffmpeg \
-    libavcodec-dev \
-    libavformat-dev \
-    libavdevice-dev \
-    libavfilter-dev \
-    libavutil-dev \
-    libswscale-dev \
-    libopus-dev \
-    libssl-dev \
-    python3-dev \
-    python3-setuptools \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# FFmpeg for streaming
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg &&     rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip setuptools wheel
-RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY requirements.txt .
+RUN pip install -r requirements.txt
 
-# Copy app code
-COPY . /app
+COPY . .
 
-CMD ["python", "bot.py"]
+CMD ["python", "-m", "src.main"]
