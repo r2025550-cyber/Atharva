@@ -1,7 +1,7 @@
 import asyncio
 import os
 from typing import Optional
-from pytgcalls import PyTgCalls, idle
+from pytgcalls import GroupCallFactory
 from pytgcalls.types import Update
 from pytgcalls.types.input_stream import AudioPiped
 from pytgcalls.types.stream import StreamAudioEnded
@@ -17,7 +17,7 @@ MIN_VOLUME = 0
 class Player:
     def __init__(self, user_client: Client):
         self.app = user_client
-        self.call = PyTgCalls(self.app)
+        self.call = GroupCallFactory(self.app).get_group_call()
         self.queue = MusicQueue()
         self.volume: dict[int, int] = {}  # chat_id -> volume percent
 
