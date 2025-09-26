@@ -1,7 +1,7 @@
 pyrogram==2.0.106
 tgcrypto==1.2.5
-pytgcalls==3.0.0.dev24   # latest available dev release
-yt-dlp==2025.01.08
+pytgcalls==3.0.0.dev24
+yt-dlp==2024.10.7
 python-dotenv==1.0.1
 loguru==0.7.2
 aiohttp==3.10.5
