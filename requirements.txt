@@ -4,3 +4,4 @@ tgcaller==1.0.3
 yt-dlp==2024.10.7
 python-dotenv==1.0.1
 loguru==0.7.2
+aiohttp==3.10.5
